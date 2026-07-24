@@ -16,7 +16,7 @@ router.get("/tenant", requireAuth, async (req, res) => {
 
 const UpdateTenantBody = zod.object({
   name: zod.string().min(2).optional(),
-  logoUrl: zod.url().optional().or(zod.literal("")),
+  logoUrl: zod.string().url().optional().or(zod.literal("")),
   loyaltyPointsPerKes: zod.coerce.number().min(0).max(1000).optional(),
   loyaltyRedemptionValueKes: zod.coerce.number().min(0).max(1000).optional(),
 });
@@ -69,7 +69,7 @@ const UpdateMpesaSettingsBody = zod.object({
   accountType: zod.enum(["PAYBILL", "TILL"]).optional(),
   shortcode: zod.string().min(1).optional(),
   environment: zod.enum(["sandbox", "production"]).optional(),
-  callbackUrl: zod.union([zod.url(), zod.literal("")]).optional(),
+  callbackUrl: zod.union([zod.string().url(), zod.literal("")]).optional(),
   consumerKey: zod.string().optional(),
   consumerSecret: zod.string().optional(),
   passkey: zod.string().optional(),
