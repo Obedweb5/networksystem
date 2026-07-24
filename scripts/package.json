@@ -8,6 +8,10 @@
     "seed:initial": "tsx ./src/seed-initial-tenant.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "dependencies": {
+    "@workspace/db": "workspace:*",
+    "drizzle-orm": "catalog:"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "bcrypt": "^6.0.0",
