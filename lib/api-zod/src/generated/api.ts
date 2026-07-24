@@ -23,7 +23,7 @@ export const HealthCheckResponse = zod.object({
 
 
 export const LoginBody = zod.object({
-  "email": zod.email(),
+  "email": zod.string().email(),
   "password": zod.string().min(1)
 })
 
@@ -108,7 +108,7 @@ export const SignupBody = zod.object({
   "companyName": zod.string().min(signupBodyCompanyNameMin),
   "firstName": zod.string().min(1),
   "lastName": zod.string().min(1),
-  "email": zod.email(),
+  "email": zod.string().email(),
   "password": zod.string().min(signupBodyPasswordMin)
 })
 
@@ -132,7 +132,7 @@ export const SignupResponse = zod.object({
  * @summary Request a password reset link
  */
 export const ForgotPasswordBody = zod.object({
-  "email": zod.email()
+  "email": zod.string().email()
 })
 
 export const ForgotPasswordResponse = zod.object({
@@ -273,7 +273,7 @@ export const ListCustomersResponse = zod.object({
 export const CreateCustomerBody = zod.object({
   "firstName": zod.string(),
   "lastName": zod.string(),
-  "email": zod.email().optional(),
+  "email": zod.string().email().optional(),
   "phone": zod.string(),
   "nationalId": zod.string().optional(),
   "address": zod.string().optional(),
@@ -348,7 +348,7 @@ export const UpdateCustomerParams = zod.object({
 export const UpdateCustomerBody = zod.object({
   "firstName": zod.string().optional(),
   "lastName": zod.string().optional(),
-  "email": zod.email().optional(),
+  "email": zod.string().email().optional(),
   "phone": zod.string().optional(),
   "nationalId": zod.string().optional(),
   "address": zod.string().optional(),
@@ -1320,7 +1320,7 @@ export const createUserBodyPasswordMin = 8;
 
 
 export const CreateUserBody = zod.object({
-  "email": zod.email(),
+  "email": zod.string().email(),
   "firstName": zod.string(),
   "lastName": zod.string(),
   "phone": zod.string().optional(),
@@ -1486,7 +1486,7 @@ export const GetPortalMeResponse = zod.object({
 export const UpdatePortalMeBody = zod.object({
   "firstName": zod.string().min(1).optional(),
   "lastName": zod.string().min(1).optional(),
-  "email": zod.email().nullish(),
+  "email": zod.string().email().nullish(),
   "address": zod.string().nullish()
 })
 
@@ -1655,5 +1655,3 @@ export const PortalRedeemLoyaltyResponse = zod.object({
   "createdAt": zod.coerce.date().optional()
 }).optional()
 })
-
-
