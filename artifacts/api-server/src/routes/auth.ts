@@ -202,7 +202,7 @@ router.post("/auth/signup", async (req, res) => {
 
 const RegisterBody = zod.object({
   fullName: zod.string().min(2),
-  email: zod.email(),
+  email: zod.string().email(),
   phone: zod.string().min(7).max(20),
   companyName: zod.string().min(2),
   businessLocation: zod.string().min(1),
