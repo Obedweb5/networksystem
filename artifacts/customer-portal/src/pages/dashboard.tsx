@@ -1,4 +1,4 @@
-import { useGetPortalDashboard } from "@workspace/api-client-react";
+import { useGetPortalDashboard } from "@/lib/api-client";
 import { PortalLayout } from "@/components/portal-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";

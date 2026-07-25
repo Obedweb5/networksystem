@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useGetPortalMe, useUpdatePortalMe, getGetPortalMeQueryKey } from "@workspace/api-client-react";
+import { useGetPortalMe, useUpdatePortalMe, getGetPortalMeQueryKey } from "@/lib/api-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { PortalLayout } from "@/components/portal-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

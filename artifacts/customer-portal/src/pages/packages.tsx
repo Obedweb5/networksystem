@@ -4,8 +4,8 @@ import {
   useInitiateStkPush,
   useGetStkPushStatus,
   useGetPortalDashboard,
-} from "@workspace/api-client-react";
-import type { HotspotPackagePublic } from "@workspace/api-client-react";
+} from "@/lib/api-client";
+import type { HotspotPackagePublic } from "@/lib/api-client";
 import { useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";

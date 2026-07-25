@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   useGetPortalLoyalty,
   usePortalRedeemLoyalty,
-} from "@workspace/api-client-react";
+} from "@/lib/api-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { PortalLayout } from "@/components/portal-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Star, Gift, TrendingUp, Loader2 } from "lucide-react";
-import { getGetPortalLoyaltyQueryKey } from "@workspace/api-client-react";
+import { getGetPortalLoyaltyQueryKey } from "@/lib/api-client";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-KE", {

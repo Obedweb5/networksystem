@@ -1,4 +1,4 @@
-import { useGetPortalCurrentSession, useGetPortalSessionHistory } from "@workspace/api-client-react";
+import { useGetPortalCurrentSession, useGetPortalSessionHistory } from "@/lib/api-client";
 import { PortalLayout } from "@/components/portal-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
