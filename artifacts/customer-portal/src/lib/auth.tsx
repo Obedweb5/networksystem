@@ -7,7 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { setAuthTokenGetter, getBaseUrl } from "@workspace/api-client-react";
+import { setAuthTokenGetter, getBaseUrl } from "@/lib/api-client";
 
 interface CustomerInfo {
   id: string;
