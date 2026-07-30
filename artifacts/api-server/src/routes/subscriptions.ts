@@ -102,7 +102,7 @@ router.get("/subscriptions/:id", requireAuth, async (req, res) => {
   res.json({ ...row.sub, planName: row.planName, planType: row.planType, customerName: row.customerName, routerName: row.routerName });
 });
 
-router.put("/subscriptions/:id", requireAuth, async (req, res) => {
+router.patch("/subscriptions/:id", requireAuth, async (req, res) => {
   const paramParse = UpdateSubscriptionParams.safeParse(req.params);
   const bodyParse = UpdateSubscriptionBody.safeParse(req.body);
   if (!paramParse.success || !bodyParse.success) { res.status(400).json({ error: "Validation failed" }); return; }
