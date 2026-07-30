@@ -34,7 +34,7 @@ router.post("/users", requireAuth, async (req, res) => {
   res.status(201).json(safeUser(user!));
 });
 
-router.put("/users/:id", requireAuth, async (req, res) => {
+router.patch("/users/:id", requireAuth, async (req, res) => {
   const paramParse = UpdateUserParams.safeParse(req.params);
   const bodyParse = UpdateUserBody.safeParse(req.body);
   if (!paramParse.success || !bodyParse.success) { res.status(400).json({ error: "Validation failed" }); return; }
