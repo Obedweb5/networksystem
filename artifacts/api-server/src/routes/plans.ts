@@ -35,7 +35,7 @@ router.get("/plans/:id", requireAuth, async (req, res) => {
   res.json(plan);
 });
 
-router.put("/plans/:id", requireAuth, async (req, res) => {
+router.patch("/plans/:id", requireAuth, async (req, res) => {
   const paramParse = UpdatePlanParams.safeParse(req.params);
   const bodyParse = UpdatePlanBody.safeParse(req.body);
   if (!paramParse.success || !bodyParse.success) { res.status(400).json({ error: "Validation failed" }); return; }
