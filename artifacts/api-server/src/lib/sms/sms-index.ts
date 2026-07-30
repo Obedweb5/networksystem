@@ -25,13 +25,14 @@ const noop = new NoopSmsProvider();
 export async function getSmsProvider(tenantId: string): Promise<SmsProvider> {
   const [tenantSettings] = await db.select().from(tenantSmsSettingsTable).where(eq(tenantSmsSettingsTable.tenantId, tenantId)).limit(1);
 
-  if (tenantSettings?.isEnabled && tenantSettings.provider === "texin" && tenantSettings.apiUrl && tenantSettings.apiKeyEncrypted && tenantSettings.apiSecretEncrypted) {
+  // Texin's real gateway only needs an api_key (no secret) — apiUrl is
+  // optional here since the provider already defaults to the real endpoint;
+  // only override it if the tenant has explicitly configured a different one.
+  if (tenantSettings?.isEnabled && tenantSettings.provider === "texin" && tenantSettings.apiKeyEncrypted) {
     try {
       return new TexinSmsProvider({
-        apiUrl: tenantSettings.apiUrl,
         apiKey: decryptCredential(tenantSettings.apiKeyEncrypted),
-        apiSecret: decryptCredential(tenantSettings.apiSecretEncrypted),
-        senderId: tenantSettings.senderId ?? undefined,
+        gatewayUrl: tenantSettings.apiUrl ?? undefined,
       });
     } catch {
       // Decryption failure (e.g. PROVISIONING_CREDENTIAL_KEY rotated) must
@@ -39,9 +40,9 @@ export async function getSmsProvider(tenantId: string): Promise<SmsProvider> {
     }
   }
 
-  const { TEXIN_API_URL, TEXIN_API_KEY, TEXIN_API_SECRET, TEXIN_SENDER_ID, SMS_PROVIDER } = process.env;
-  if ((SMS_PROVIDER ?? "texin") === "texin" && TEXIN_API_URL && TEXIN_API_KEY && TEXIN_API_SECRET) {
-    return new TexinSmsProvider({ apiUrl: TEXIN_API_URL, apiKey: TEXIN_API_KEY, apiSecret: TEXIN_API_SECRET, senderId: TEXIN_SENDER_ID });
+  const { TEXIN_API_KEY, TEXIN_GATEWAY_URL, SMS_PROVIDER } = process.env;
+  if ((SMS_PROVIDER ?? "texin") === "texin" && TEXIN_API_KEY) {
+    return new TexinSmsProvider({ apiKey: TEXIN_API_KEY, gatewayUrl: TEXIN_GATEWAY_URL });
   }
 
   return noop;
