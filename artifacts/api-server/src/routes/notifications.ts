@@ -30,10 +30,6 @@ router.patch("/notification-templates/:id", requireAuth, async (req, res) => {
   return notificationTemplateUpdate(req, res);
 });
 
-router.put("/notification-templates/:id", requireAuth, async (req, res) => {
-  return notificationTemplateUpdate(req, res);
-});
-
 async function notificationTemplateUpdate(req: any, res: any) {
   const paramParse = UpdateNotificationTemplateParams.safeParse(req.params);
   const bodyParse = UpdateNotificationTemplateBody.safeParse(req.body);
