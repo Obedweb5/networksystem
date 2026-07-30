@@ -14,4 +14,4 @@ ISP / hotspot management platform — admin dashboard for operators, self-servic
 
 ## Stack
 
-Frontends deployed on **Vercel** · API on **Render** · Postgres via **Render** · pnpm monorepo (workspace catalog).
+CONTACT OWNERE TO TELL THIS IS A FULL STACK
