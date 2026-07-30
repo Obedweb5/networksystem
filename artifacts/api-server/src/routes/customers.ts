@@ -57,7 +57,7 @@ router.get("/customers/:id", requireAuth, async (req, res) => {
   res.json({ ...customer, activeSubscription: activeSub ? { ...activeSub.sub, planName: activeSub.planName } : null });
 });
 
-router.put("/customers/:id", requireAuth, async (req, res) => {
+router.patch("/customers/:id", requireAuth, async (req, res) => {
   const paramParse = UpdateCustomerParams.safeParse(req.params);
   const bodyParse = UpdateCustomerBody.safeParse(req.body);
   if (!paramParse.success || !bodyParse.success) { res.status(400).json({ error: "Validation failed" }); return; }
