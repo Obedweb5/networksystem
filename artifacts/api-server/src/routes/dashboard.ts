@@ -7,6 +7,7 @@ import {
 } from "@workspace/db/schema";
 import { countActiveHotspotUsers, countActivePppoeUsers, MikroTikClient, type RouterConfig } from "@workspace/mikrotik";
 import { requireAuth } from "../middlewares/auth";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 const trafficState = new Map<string, { rx: number; tx: number; at: number }>();
@@ -52,22 +53,52 @@ async function liveNetwork(routers: RouterConfig[]) {
 
 router.get("/dashboard/summary", requireAuth, async (req, res) => {
   const tenantId = req.user!.tenantId;
-  const [customers, activeSubscriptions, pendingInvoices, unusedVouchers, routers] = await Promise.all([
+
+  // Promise.allSettled instead of Promise.all: one slow/broken source (e.g. a
+  // router that's currently unreachable) must never blank out every other
+  // number on the dashboard. Each section fails independently and falls back
+  // to 0/"0" so the endpoint always returns 200 with whatever it could get.
+  const [customersR, activeSubscriptionsR, pendingInvoicesR, unusedVouchersR, routersR] = await Promise.allSettled([
     db.select({ value: count() }).from(customersTable).where(eq(customersTable.tenantId, tenantId)),
     db.select({ value: count() }).from(subscriptionsTable).where(and(eq(subscriptionsTable.tenantId, tenantId), eq(subscriptionsTable.status, "ACTIVE"))),
     db.select({ value: count() }).from(invoicesTable).where(and(eq(invoicesTable.tenantId, tenantId), eq(invoicesTable.status, "PENDING"))),
     db.select({ value: count() }).from(vouchersTable).where(and(eq(vouchersTable.tenantId, tenantId), eq(vouchersTable.status, "UNUSED"))),
     db.select().from(routersTable).where(and(eq(routersTable.tenantId, tenantId), eq(routersTable.isActive, true))),
   ]);
-  const routerConfigs = asRouters(routers);
-  const [activePppoeUsers, activeHotspotSessions] = await Promise.all([countActivePppoeUsers(routerConfigs), countActiveHotspotUsers(routerConfigs)]);
+
+  for (const [label, result] of [["customers", customersR], ["activeSubscriptions", activeSubscriptionsR], ["pendingInvoices", pendingInvoicesR], ["unusedVouchers", unusedVouchersR], ["routers", routersR]] as const) {
+    if (result.status === "rejected") logger.error({ err: result.reason, section: label }, "dashboard/summary: query failed, falling back to 0");
+  }
+
+  const routerConfigs = routersR.status === "fulfilled" ? asRouters(routersR.value) : [];
+
+  const [pppoeR, hotspotR] = await Promise.allSettled([countActivePppoeUsers(routerConfigs), countActiveHotspotUsers(routerConfigs)]);
+  const activePppoeUsers = pppoeR.status === "fulfilled" ? pppoeR.value : 0;
+  const activeHotspotSessions = hotspotR.status === "fulfilled" ? hotspotR.value : 0;
+  if (pppoeR.status === "rejected") logger.error({ err: pppoeR.reason }, "dashboard/summary: countActivePppoeUsers failed, falling back to 0");
+  if (hotspotR.status === "rejected") logger.error({ err: hotspotR.reason }, "dashboard/summary: countActiveHotspotUsers failed, falling back to 0");
+
   const today = new Date(); today.setHours(0, 0, 0, 0); const month = new Date(today.getFullYear(), today.getMonth(), 1);
-  const [todayRevenue, monthRevenue, expiring] = await Promise.all([
+  const [todayRevenueR, monthRevenueR, expiringR] = await Promise.allSettled([
     db.select({ value: sql<string>`coalesce(sum(${invoicesTable.totalAmount}), 0)` }).from(invoicesTable).where(and(eq(invoicesTable.tenantId, tenantId), eq(invoicesTable.status, "PAID"), gte(invoicesTable.paidAt, today))),
     db.select({ value: sql<string>`coalesce(sum(${invoicesTable.totalAmount}), 0)` }).from(invoicesTable).where(and(eq(invoicesTable.tenantId, tenantId), eq(invoicesTable.status, "PAID"), gte(invoicesTable.paidAt, month))),
     db.select({ value: count() }).from(subscriptionsTable).where(and(eq(subscriptionsTable.tenantId, tenantId), eq(subscriptionsTable.status, "ACTIVE"), gte(subscriptionsTable.expiresAt, new Date()), lt(subscriptionsTable.expiresAt, new Date(Date.now() + 7 * 86400000)))),
   ]);
-  res.json({ totalCustomers: customers[0]?.value ?? 0, activeSubscriptions: activeSubscriptions[0]?.value ?? 0, pendingInvoices: pendingInvoices[0]?.value ?? 0, unusedVouchers: unusedVouchers[0]?.value ?? 0, activePppoeUsers, activeHotspotSessions, pppoeClients: activePppoeUsers, hotspotClients: activeHotspotSessions, todayRevenue: todayRevenue[0]?.value ?? "0", monthRevenue: monthRevenue[0]?.value ?? "0", expiringSubscriptions: expiring[0]?.value ?? 0 });
+  for (const [label, result] of [["todayRevenue", todayRevenueR], ["monthRevenue", monthRevenueR], ["expiring", expiringR]] as const) {
+    if (result.status === "rejected") logger.error({ err: result.reason, section: label }, "dashboard/summary: query failed, falling back to 0");
+  }
+
+  res.json({
+    totalCustomers: customersR.status === "fulfilled" ? customersR.value[0]?.value ?? 0 : 0,
+    activeSubscriptions: activeSubscriptionsR.status === "fulfilled" ? activeSubscriptionsR.value[0]?.value ?? 0 : 0,
+    pendingInvoices: pendingInvoicesR.status === "fulfilled" ? pendingInvoicesR.value[0]?.value ?? 0 : 0,
+    unusedVouchers: unusedVouchersR.status === "fulfilled" ? unusedVouchersR.value[0]?.value ?? 0 : 0,
+    activePppoeUsers, activeHotspotSessions,
+    pppoeClients: activePppoeUsers, hotspotClients: activeHotspotSessions,
+    todayRevenue: todayRevenueR.status === "fulfilled" ? todayRevenueR.value[0]?.value ?? "0" : "0",
+    monthRevenue: monthRevenueR.status === "fulfilled" ? monthRevenueR.value[0]?.value ?? "0" : "0",
+    expiringSubscriptions: expiringR.status === "fulfilled" ? expiringR.value[0]?.value ?? 0 : 0,
+  });
 });
 
 router.get("/dashboard/subscription-stats", requireAuth, async (req, res) => {
