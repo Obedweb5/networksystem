@@ -11,6 +11,7 @@ import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 
 const schema = z.object({
@@ -22,6 +23,7 @@ const schema = z.object({
   speedDownKbps: z.coerce.number().optional(),
   speedUpKbps: z.coerce.number().optional(),
   dataLimitMb: z.coerce.number().optional(),
+  isActive: z.boolean().optional(),
 });
 
 type PlanForm = z.infer<typeof schema>;
@@ -39,10 +41,10 @@ export default function PlansPage() {
   const updateMut = useUpdatePlan();
   const deleteMut = useDeletePlan();
 
-  const form = useForm<PlanForm>({ resolver: zodResolver(schema), defaultValues: { name: "", type: "HOTSPOT", price: "", durationDays: 30 } });
+  const form = useForm<PlanForm>({ resolver: zodResolver(schema), defaultValues: { name: "", type: "HOTSPOT", price: "", durationDays: 30, isActive: true } });
 
-  function openCreate() { setEditId(null); form.reset({ name: "", type: "HOTSPOT", price: "", durationDays: 30 }); setOpen(true); }
-  function openEdit(p: any) { setEditId(p.id); form.reset({ name: p.name, type: p.type, price: p.price, durationDays: p.durationDays, description: p.description, speedDownKbps: p.speedDownKbps, speedUpKbps: p.speedUpKbps, dataLimitMb: p.dataLimitMb }); setOpen(true); }
+  function openCreate() { setEditId(null); form.reset({ name: "", type: "HOTSPOT", price: "", durationDays: 30, isActive: true }); setOpen(true); }
+  function openEdit(p: any) { setEditId(p.id); form.reset({ name: p.name, type: p.type, price: p.price, durationDays: p.durationDays, description: p.description, speedDownKbps: p.speedDownKbps, speedUpKbps: p.speedUpKbps, dataLimitMb: p.dataLimitMb, isActive: p.isActive }); setOpen(true); }
 
   function onSubmit(values: PlanForm) {
     if (editId) {
@@ -61,6 +63,13 @@ export default function PlansPage() {
   function handleDelete(id: string) {
     if (!confirm("Deactivate this plan?")) return;
     deleteMut.mutate({ id }, { onSuccess: () => { toast({ title: "Plan deactivated" }); qc.invalidateQueries({ queryKey: getListPlansQueryKey() }); } });
+  }
+
+  function handleReactivate(id: string) {
+    updateMut.mutate({ id, data: { isActive: true } }, {
+      onSuccess: () => { toast({ title: "Plan reactivated" }); qc.invalidateQueries({ queryKey: getListPlansQueryKey() }); },
+      onError: () => toast({ title: "Failed to reactivate plan", variant: "destructive" }),
+    });
   }
 
   return (
@@ -110,7 +119,18 @@ export default function PlansPage() {
                   {p.speedUpKbps ? `${p.speedUpKbps / 1024 >= 1 ? `${(p.speedUpKbps / 1024).toFixed(0)} Mbps` : `${p.speedUpKbps} Kbps`} ↑` : ""}
                 </p>
               )}
-              {!p.isActive && <span className="text-xs text-muted-foreground italic">Deactivated</span>}
+              {!p.isActive && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground italic">Deactivated</span>
+                  <button
+                    onClick={() => handleReactivate(p.id)}
+                    className="text-xs font-semibold text-primary hover:underline"
+                    data-testid={`btn-reactivate-plan-${p.id}`}
+                  >
+                    Reactivate
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -150,6 +170,19 @@ export default function PlansPage() {
                   <FormItem><FormLabel>Upload (Kbps)</FormLabel><FormControl><Input {...field} type="number" min={0} data-testid="input-speed-up" /></FormControl><FormMessage /></FormItem>
                 )} />
               </div>
+              {editId && (
+                <FormField control={form.control} name="isActive" render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-md border px-3 py-2">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-sm">Active</FormLabel>
+                      <p className="text-xs text-muted-foreground">Deactivated plans are hidden from the customer portal.</p>
+                    </div>
+                    <FormControl>
+                      <Switch checked={field.value ?? true} onCheckedChange={field.onChange} data-testid="switch-plan-active" />
+                    </FormControl>
+                  </FormItem>
+                )} />
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
                 <Button type="submit" disabled={createMut.isPending || updateMut.isPending} data-testid="btn-submit-plan">
