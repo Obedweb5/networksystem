@@ -40,7 +40,7 @@ router.get("/routers/:id", requireAuth, async (req, res) => {
   res.json(r);
 });
 
-router.put("/routers/:id", requireAuth, async (req, res) => {
+router.patch("/routers/:id", requireAuth, async (req, res) => {
   const paramParse = UpdateRouterParams.safeParse(req.params);
   const bodyParse = UpdateRouterBody.safeParse(req.body);
   if (!paramParse.success || !bodyParse.success) { res.status(400).json({ error: "Validation failed" }); return; }
