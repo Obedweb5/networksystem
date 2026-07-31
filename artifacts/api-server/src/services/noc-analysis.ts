@@ -187,7 +187,7 @@ async function recentRouterAlerts(routerId: string): Promise<Array<{ severity: s
 async function recentProvisioningFailureCount(routerId: string): Promise<number> {
   const since = new Date(Date.now() - 30 * 60_000);
   const [row] = await db.select({ n: count() }).from(provisioningAuditLogsTable)
-    .where(and(eq(provisioningAuditLogsTable.routerId, routerId), eq(provisioningAuditLogsTable.status, "FAILED"), gte(provisioningAuditLogsTable.createdAt, since)));
+    .where(and(eq(provisioningAuditLogsTable.routerId, routerId), eq(provisioningAuditLogsTable.status, "FAILED"), gte(provisioningAuditLogsTable.executedAt, since)));
   return Number(row?.n ?? 0);
 }
 
@@ -462,7 +462,7 @@ async function runProvisioningHealthScan(): Promise<void> {
   const since = new Date(Date.now() - 30 * 60_000);
   const grouped = await db.select({ routerId: provisioningAuditLogsTable.routerId, tenantId: provisioningAuditLogsTable.tenantId, failures: count() })
     .from(provisioningAuditLogsTable)
-    .where(and(eq(provisioningAuditLogsTable.status, "FAILED"), gte(provisioningAuditLogsTable.createdAt, since)))
+    .where(and(eq(provisioningAuditLogsTable.status, "FAILED"), gte(provisioningAuditLogsTable.executedAt, since)))
     .groupBy(provisioningAuditLogsTable.routerId, provisioningAuditLogsTable.tenantId);
 
   for (const g of grouped) {
