@@ -8,11 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Wifi, Loader2 } from "lucide-react";
+import { getTenantId } from "@/lib/tenant";
 
-// tenantId is resolved the same way packages.tsx does it — from the URL,
-// since this is a multi-tenant portal with no other way yet to know which
-// ISP's customer is signing in.
-const TENANT_ID = new URLSearchParams(window.location.search).get("tenantId") ?? "";
+// tenantId is resolved the same way packages.tsx does it — from the URL if
+// present, falling back to the tenantId cached from an earlier page in this
+// session (see lib/tenant.ts — client-side navigation drops the query
+// string, so this page can't always rely on the URL still having it).
+const TENANT_ID = getTenantId();
 const PHONE_RE = /^0[17]\d{8}$/;
 
 interface VerifyResponse {
@@ -68,6 +70,10 @@ export default function LoginPage() {
     const trimmed = phone.trim();
     if (!PHONE_RE.test(trimmed)) {
       setError("Enter a valid phone number, e.g. 0712345678.");
+      return;
+    }
+    if (!TENANT_ID) {
+      setError("We couldn't tell which provider this is for. Please use the sign-in link from your ISP's portal instead of a bookmarked page.");
       return;
     }
     setIsRequesting(true);
