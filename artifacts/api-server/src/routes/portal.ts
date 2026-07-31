@@ -136,7 +136,7 @@ router.get("/portal/device-status", async (req, res) => {
  */
 router.post("/portal/auth/otp/request", otpRequestRateLimiter, async (req, res) => {
   const { tenantId, phone } = req.body ?? {};
-  if (typeof tenantId !== "string" || typeof phone !== "string" || !PHONE.test(phone)) {
+  if (!tenantId || typeof tenantId !== "string" || typeof phone !== "string" || !PHONE.test(phone)) {
     res.status(400).json({ error: "A valid tenantId and Kenyan phone number are required" });
     return;
   }
@@ -171,7 +171,7 @@ router.post("/portal/auth/otp/request", otpRequestRateLimiter, async (req, res) 
 /** Step 2: exchange the code for a session. This is the only way a customer token is ever issued. */
 router.post("/portal/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
   const { tenantId, phone, code } = req.body ?? {};
-  if (typeof tenantId !== "string" || typeof phone !== "string" || !PHONE.test(phone) || typeof code !== "string" || !/^\d{6}$/.test(code)) {
+  if (!tenantId || typeof tenantId !== "string" || typeof phone !== "string" || !PHONE.test(phone) || typeof code !== "string" || !/^\d{6}$/.test(code)) {
     res.status(400).json({ error: "A valid tenantId, phone, and 6-digit code are required" });
     return;
   }
@@ -405,7 +405,7 @@ function extractReceiptCode(rawCode: unknown, rawMessage: unknown): string | nul
  */
 router.post("/portal/payments/verify", reconnectRateLimiter, async (req, res) => {
   const { tenantId, code: rawCode, message, mac: rawMac } = req.body ?? {};
-  if (typeof tenantId !== "string") { res.status(400).json({ error: "tenantId is required" }); return; }
+  if (!tenantId || typeof tenantId !== "string") { res.status(400).json({ error: "tenantId is required" }); return; }
   const code = extractReceiptCode(rawCode, message);
   if (!code) { res.status(400).json({ error: "Enter the M-PESA transaction code, or paste the full confirmation message." }); return; }
   const mac = typeof rawMac === "string" ? normalizeMac(rawMac) : null;
@@ -453,7 +453,7 @@ router.post("/portal/payments/verify", reconnectRateLimiter, async (req, res) =>
  */
 router.post("/portal/vouchers/redeem", voucherRedeemRateLimiter, async (req, res) => {
   const { tenantId, code: rawCode, mac: rawMac, routerId: rawRouterId } = req.body ?? {};
-  if (typeof tenantId !== "string" || typeof rawCode !== "string" || !rawCode.trim()) {
+  if (!tenantId || typeof tenantId !== "string" || typeof rawCode !== "string" || !rawCode.trim()) {
     res.status(400).json({ error: "A voucher code is required" });
     return;
   }
@@ -542,7 +542,7 @@ router.post("/portal/vouchers/redeem", voucherRedeemRateLimiter, async (req, res
  */
 router.post("/portal/auth/reconnect-account", portalSignInRateLimiter, async (req, res) => {
   const { tenantId, accountNumber: rawAccountNumber, mac: rawMac } = req.body ?? {};
-  if (typeof tenantId !== "string" || typeof rawAccountNumber !== "string" || !rawAccountNumber.trim()) {
+  if (!tenantId || typeof tenantId !== "string" || typeof rawAccountNumber !== "string" || !rawAccountNumber.trim()) {
     res.status(400).json({ error: "Your account number is required" });
     return;
   }
