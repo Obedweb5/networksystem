@@ -73,7 +73,7 @@ router.get("/noc/overview", requireAuth, async (req, res) => {
   const [provisioningStats] = await db.select({
     succeeded: sql<string>`count(*) filter (where ${provisioningAuditLogsTable.status} = 'SUCCESS')`,
     failed: sql<string>`count(*) filter (where ${provisioningAuditLogsTable.status} = 'FAILED')`,
-  }).from(provisioningAuditLogsTable).where(and(eq(provisioningAuditLogsTable.tenantId, tenantId), gte(provisioningAuditLogsTable.createdAt, since1h)));
+  }).from(provisioningAuditLogsTable).where(and(eq(provisioningAuditLogsTable.tenantId, tenantId), gte(provisioningAuditLogsTable.executedAt, since1h)));
 
   res.json({
     routers: { total: routers.length, online: statusCounts.ONLINE, degraded: statusCounts.DEGRADED, offline: statusCounts.OFFLINE },
