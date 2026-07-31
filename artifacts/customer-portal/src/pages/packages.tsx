@@ -32,6 +32,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getTenantId, withTenant } from "@/lib/tenant";
 
 const KENYAN_PHONE_RE = /^0[17]\d{8}$/;
 
@@ -228,7 +229,7 @@ function BuyDialog({
                 className="text-xs font-semibold text-primary hover:underline"
                 onClick={() => {
                   handleClose(false);
-                  navigate("/login");
+                  navigate(withTenant("/login"));
                 }}
               >
                 Sign in to my account
@@ -255,7 +256,7 @@ function BuyDialog({
 }
 
 export default function PackagesPage() {
-  const tenantId = new URLSearchParams(window.location.search).get("tenantId") ?? "";
+  const tenantId = getTenantId();
   const { data: packages, isLoading } = useListPortalPackages(
     { tenantId },
     { query: { enabled: Boolean(tenantId) } },
@@ -339,7 +340,7 @@ export default function PackagesPage() {
             </DropdownMenu>
           ) : (
             <button
-              onClick={() => navigate("/login")}
+              onClick={() => navigate(withTenant("/login"))}
               className="flex items-center gap-1.5 text-sm text-white/90 hover:text-white transition-colors rounded-full px-3 py-1.5 border border-white/30 hover:bg-white/10 hover:border-white/50"
               data-testid="button-login"
             >
