@@ -1251,11 +1251,20 @@ paths:
             format: uuid
       responses:
         "200":
-          description: Deleted
+          description: |
+            Deleted. If the router had no subscriptions, provisioning
+            records, or voucher batches referencing it, it was permanently
+            removed (hardDeleted: true). Otherwise it was deactivated
+            instead (hardDeleted: false) and `reason` explains why.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageResponse"
+                type: object
+                properties:
+                  success: { type: boolean }
+                  hardDeleted: { type: boolean }
+                  reason: { type: string }
+                required: [success, hardDeleted]
 
   /routers/{id}/alerts:
     get:
