@@ -98,9 +98,16 @@ export default function RoutersPage() {
 
   function handleDelete(r: any, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!window.confirm(`Delete router "${r.name}"? This will mark it inactive.`)) return;
+    if (!window.confirm(`Delete router "${r.name}"? If it has no subscriptions or provisioning history, it will be permanently removed — otherwise it'll be marked inactive.`)) return;
     deleteMut.mutate({ id: r.id }, {
-      onSuccess: () => { toast({ title: "Router deleted" }); qc.invalidateQueries({ queryKey: getListRoutersQueryKey() }); },
+      onSuccess: (data: any) => {
+        if (data?.hardDeleted) {
+          toast({ title: "Router deleted" });
+        } else {
+          toast({ title: "Router deactivated", description: data?.reason ?? "This router has history, so it was marked inactive instead of deleted." });
+        }
+        qc.invalidateQueries({ queryKey: getListRoutersQueryKey() });
+      },
       onError: () => toast({ title: "Failed to delete router", variant: "destructive" }),
     });
   }
