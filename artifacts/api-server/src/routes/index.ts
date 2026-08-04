@@ -17,6 +17,7 @@ import sessionsRouter from "./sessions";
 import nocRouter from "./noc";
 import settingsOverviewRouter from "./settings-overview";
 import radiusRouter from "./radius";
+import assistantRouter from "./assistant";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use(sessionsRouter);
 router.use(nocRouter);
 router.use(settingsOverviewRouter);
 router.use(radiusRouter);
+router.use(assistantRouter);
 
 export default router;
