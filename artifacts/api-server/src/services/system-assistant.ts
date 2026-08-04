@@ -568,7 +568,7 @@ async function callGemini(system: string, contents: GeminiContent[], key: string
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
+        systemInstruction: { parts: [{ text: system }] },
         contents,
         tools: toGeminiTools(),
         generationConfig: { maxOutputTokens: 1500 },
@@ -635,4 +635,3 @@ export async function runAssistantTurn(history: ChatMessage[], actor: AssistantA
 
   return { reply: "I made several tool calls but couldn't finish reasoning about the result — try narrowing your question.", toolTrace };
 }
-
