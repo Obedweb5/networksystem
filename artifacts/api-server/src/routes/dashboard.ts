@@ -3,7 +3,7 @@ import { and, count, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   customersTable, invoicesTable, routerAlertsTable, routersTable,
-  subscriptionsTable, vouchersTable,
+  subscriptionsTable, voucherBatchesTable, vouchersTable,
 } from "@workspace/db/schema";
 import { countActiveHotspotUsers, countActivePppoeUsers, MikroTikClient, type RouterConfig } from "@workspace/mikrotik";
 import { requireAuth } from "../middlewares/auth";
@@ -62,7 +62,9 @@ router.get("/dashboard/summary", requireAuth, async (req, res) => {
     db.select({ value: count() }).from(customersTable).where(eq(customersTable.tenantId, tenantId)),
     db.select({ value: count() }).from(subscriptionsTable).where(and(eq(subscriptionsTable.tenantId, tenantId), eq(subscriptionsTable.status, "ACTIVE"))),
     db.select({ value: count() }).from(invoicesTable).where(and(eq(invoicesTable.tenantId, tenantId), eq(invoicesTable.status, "PENDING"))),
-    db.select({ value: count() }).from(vouchersTable).where(and(eq(vouchersTable.tenantId, tenantId), eq(vouchersTable.status, "UNUSED"))),
+    db.select({ value: count() }).from(vouchersTable)
+      .innerJoin(voucherBatchesTable, eq(vouchersTable.batchId, voucherBatchesTable.id))
+      .where(and(eq(voucherBatchesTable.tenantId, tenantId), eq(vouchersTable.status, "UNUSED"))),
     db.select().from(routersTable).where(and(eq(routersTable.tenantId, tenantId), eq(routersTable.isActive, true))),
   ]);
 
