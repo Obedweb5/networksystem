@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { routersTable, routerAlertsTable, hotspotSessionsTable, customersTable } from "@workspace/db/schema";
+import { routersTable, routerAlertsTable, hotspotSessionsTable, customersTable, subscriptionsTable, provisioningMappingsTable, voucherBatchesTable } from "@workspace/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
 import {
   ListRoutersQueryParams, CreateRouterBody, GetRouterParams,
@@ -55,10 +55,48 @@ router.delete("/routers/:id", requireAuth, async (req, res) => {
   const parse = DeleteRouterParams.safeParse(req.params);
   if (!parse.success) { res.status(400).json({ error: "Invalid id" }); return; }
   const { tenantId } = req.user!;
-  const [updated] = await db.update(routersTable).set({ isActive: false, updatedAt: new Date() })
-    .where(and(eq(routersTable.id, parse.data.id), eq(routersTable.tenantId, tenantId))).returning();
-  if (!updated) { res.status(404).json({ error: "Router not found" }); return; }
-  res.json({ success: true });
+  const { id } = parse.data;
+
+  const [existing] = await db.select({ id: routersTable.id }).from(routersTable)
+    .where(and(eq(routersTable.id, id), eq(routersTable.tenantId, tenantId))).limit(1);
+  if (!existing) { res.status(404).json({ error: "Router not found" }); return; }
+
+  // A router is only safe to permanently remove if nothing that matters
+  // still points to it. provisioning_mappings/provisioning_audit_logs use
+  // onDelete: "restrict" at the DB level (the database itself will refuse
+  // a hard delete if those exist), so checking subscriptions and voucher
+  // batches here covers everything the DB wouldn't already block. Alerts,
+  // sessions, and NOC telemetry cascade automatically and are fine to lose
+  // — they're monitoring history, not customer-affecting records.
+  const [[subCount], [mappingCount], [voucherCount]] = await Promise.all([
+    db.select({ count: sql<number>`count(*)::int` }).from(subscriptionsTable).where(eq(subscriptionsTable.routerId, id)),
+    db.select({ count: sql<number>`count(*)::int` }).from(provisioningMappingsTable).where(eq(provisioningMappingsTable.routerId, id)),
+    db.select({ count: sql<number>`count(*)::int` }).from(voucherBatchesTable).where(eq(voucherBatchesTable.routerId, id)),
+  ]);
+
+  const hasHistory = subCount.count > 0 || mappingCount.count > 0 || voucherCount.count > 0;
+
+  if (!hasHistory) {
+    await db.delete(routersTable).where(and(eq(routersTable.id, id), eq(routersTable.tenantId, tenantId)));
+    res.json({ success: true, hardDeleted: true });
+    return;
+  }
+
+  // Has real history — permanently deleting would either be blocked by the
+  // DB (provisioning records) or silently null out routerId on live
+  // subscriptions/voucher batches (subscriptions, vouchers). Deactivate
+  // instead so the action still does something useful.
+  await db.update(routersTable).set({ isActive: false, updatedAt: new Date() })
+    .where(and(eq(routersTable.id, id), eq(routersTable.tenantId, tenantId)));
+  const reasons: string[] = [];
+  if (subCount.count > 0) reasons.push(`${subCount.count} subscription(s)`);
+  if (mappingCount.count > 0) reasons.push(`${mappingCount.count} provisioning record(s)`);
+  if (voucherCount.count > 0) reasons.push(`${voucherCount.count} voucher batch(es)`);
+  res.json({
+    success: true,
+    hardDeleted: false,
+    reason: `This router has ${reasons.join(" and ")} tied to it, so it was deactivated instead of permanently deleted.`,
+  });
 });
 
 // Test live MikroTik connectivity and return router stats
