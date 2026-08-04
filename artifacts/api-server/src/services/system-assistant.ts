@@ -19,11 +19,11 @@ import { logger } from "../lib/logger";
  * System Assistant — a general-purpose, tool-using chat layer over the
  * whole platform (not just the NOC).
  *
- * Uses Google's Gemini API (free tier available via Google AI Studio) —
- * deliberately a different provider/key than noc-llm.ts's narrative layer,
- * which still uses ANTHROPIC_API_KEY. The two are independent: this file
- * degrading to "not configured" doesn't affect NOC root-cause narratives,
- * and vice versa.
+ * Uses Groq's OpenAI-compatible API (free tier, no credit card required,
+ * via console.groq.com) — deliberately a different provider/key than
+ * noc-llm.ts's narrative layer, which still uses ANTHROPIC_API_KEY. The two
+ * are independent: this file degrading to "not configured" doesn't affect
+ * NOC root-cause narratives, and vice versa.
  *
  * Design mirrors noc-llm.ts's safety posture, extended with tools:
  *  - Every "read" tool is a thin, tenant-scoped query against tables that
@@ -44,19 +44,19 @@ import { logger } from "../lib/logger";
  *    UI can show exactly what was looked up or changed.
  */
 
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_MODEL = "gemini-2.0-flash";
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
+// llama-3.3-70b-versatile has solid tool-calling support and generous free-tier
+// limits (30 RPM / 1,000 RPD as of mid-2026) — plenty for an internal admin chat.
+const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_TOOL_ITERATIONS = 8;
 
 function model(): string {
-  return process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
+  return process.env.GROQ_MODEL?.trim() || DEFAULT_MODEL;
 }
 
 function apiKey(): string | null {
-  // GEMINI_API_KEY is the documented name; GOOGLE_API_KEY accepted too
-  // since that's what some Google AI Studio quick-start snippets use.
-  const key = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+  const key = process.env.GROQ_API_KEY;
   return key && key.trim() ? key.trim() : null;
 }
 
@@ -100,7 +100,7 @@ const KNOWN_GAPS = [
   { area: "Payments", gap: "No other payment providers (card, other mobile money) are wired up beyond M-PESA." },
   { area: "Backups", gap: "There is no in-app database backup/restore. Backups must be handled at the infrastructure level (e.g. the Postgres provider's own snapshot tooling)." },
   { area: "Integrations", gap: "No third-party integrations (accounting software, CRM, etc.) exist yet." },
-  { area: "AI narrative", gap: "The NOC root-cause narrative layer (incident reports, plain-English fault summaries) silently degrades to rule-based/unavailable if ANTHROPIC_API_KEY is not configured for the environment. This chat assistant is a separate integration (Gemini) and degrades independently if GEMINI_API_KEY is missing." },
+  { area: "AI narrative", gap: "The NOC root-cause narrative layer (incident reports, plain-English fault summaries) silently degrades to rule-based/unavailable if ANTHROPIC_API_KEY is not configured for the environment. This chat assistant is a separate integration (Groq) and degrades independently if GROQ_API_KEY is missing." },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -501,77 +501,55 @@ async function runTool(name: string, input: Record<string, unknown>, actor: Assi
 }
 
 // ---------------------------------------------------------------------------
-// Gemini schema conversion — TOOLS above is plain lowercase JSON-schema
-// ("object", "string", ...); Gemini's function-declaration Schema wants
-// uppercase Type enum values ("OBJECT", "STRING", ...). This walks the tree
-// and converts, so TOOLS itself stays provider-agnostic and readable.
+// OpenAI-style tool wrapper — TOOLS above is already plain lowercase
+// JSON-schema ("object", "string", ...), which is exactly what OpenAI's
+// (and therefore Groq's, since it's OpenAI-compatible) function-calling
+// format expects. No case conversion needed here, unlike Gemini's Schema
+// format, which wanted uppercase Type enum values.
 // ---------------------------------------------------------------------------
 
-interface JsonSchemaLike {
-  type?: string;
-  description?: string;
-  enum?: string[];
-  properties?: Record<string, JsonSchemaLike>;
-  items?: JsonSchemaLike;
-  required?: string[];
-}
-
-function toGeminiSchema(schema: JsonSchemaLike): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (schema.type) out.type = schema.type.toUpperCase();
-  if (schema.description) out.description = schema.description;
-  if (schema.enum) out.enum = schema.enum;
-  if (schema.required) out.required = schema.required;
-  if (schema.properties) {
-    out.properties = Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, toGeminiSchema(v)]));
-  }
-  if (schema.items) out.items = toGeminiSchema(schema.items);
-  return out;
-}
-
-function toGeminiTools(): Array<{ functionDeclarations: Array<{ name: string; description: string; parameters: Record<string, unknown> }> }> {
-  return [{
-    functionDeclarations: TOOLS.map((t) => ({
-      name: t.name,
-      description: t.description,
-      parameters: toGeminiSchema(t.input_schema as unknown as JsonSchemaLike),
-    })),
-  }];
+function toOpenAiTools(): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
+  return TOOLS.map((t) => ({
+    type: "function" as const,
+    function: { name: t.name, description: t.description, parameters: t.input_schema as unknown as Record<string, unknown> },
+  }));
 }
 
 // ---------------------------------------------------------------------------
-// Chat loop (Gemini generateContent, function-calling)
+// Chat loop (Groq's OpenAI-compatible /chat/completions, function-calling)
 // ---------------------------------------------------------------------------
 
-interface GeminiPart {
-  text?: string;
-  functionCall?: { name: string; args?: Record<string, unknown> };
-  functionResponse?: { name: string; response: Record<string, unknown> };
+interface OpenAiToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
 }
 
-interface GeminiContent {
-  role: "user" | "model" | "function";
-  parts: GeminiPart[];
+interface OpenAiMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: OpenAiToolCall[];
+  tool_call_id?: string;
 }
 
-interface GeminiResponse {
-  candidates?: Array<{ content?: GeminiContent; finishReason?: string }>;
-  promptFeedback?: { blockReason?: string };
+interface OpenAiChatResponse {
+  choices?: Array<{ message?: OpenAiMessage; finish_reason?: string }>;
+  error?: { message?: string };
 }
 
-async function callGemini(system: string, contents: GeminiContent[], key: string): Promise<GeminiResponse> {
+async function callGroq(messages: OpenAiMessage[], key: string): Promise<OpenAiChatResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const url = `${GEMINI_BASE_URL}/${encodeURIComponent(model())}:generateContent?key=${encodeURIComponent(key)}`;
-    const response = await fetch(url, {
+    const response = await fetch(GROQ_BASE_URL, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents,
-        tools: toGeminiTools(),
-        generationConfig: { maxOutputTokens: 1500 },
+        model: model(),
+        messages,
+        tools: toOpenAiTools(),
+        tool_choice: "auto",
+        max_tokens: 1500,
       }),
       signal: controller.signal,
     });
@@ -580,7 +558,7 @@ async function callGemini(system: string, contents: GeminiContent[], key: string
       logger.error({ status: response.status, body: body.slice(0, 500) }, "System assistant request failed");
       throw new Error(`Assistant request failed (${response.status})`);
     }
-    return (await response.json()) as GeminiResponse;
+    return (await response.json()) as OpenAiChatResponse;
   } finally {
     clearTimeout(timeout);
   }
@@ -589,35 +567,41 @@ async function callGemini(system: string, contents: GeminiContent[], key: string
 export async function runAssistantTurn(history: ChatMessage[], actor: AssistantActor): Promise<AssistantTurnResult> {
   const key = apiKey();
   if (!key) {
-    return { reply: "The System Assistant isn't configured yet — a GEMINI_API_KEY (from Google AI Studio) needs to be set for this environment.", toolTrace: [] };
+    return { reply: "The System Assistant isn't configured yet — a GROQ_API_KEY (free, from console.groq.com) needs to be set for this environment.", toolTrace: [] };
   }
 
   const system = buildSystemPrompt(actor);
-  const contents: GeminiContent[] = history.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+  const messages: OpenAiMessage[] = [
+    { role: "system", content: system },
+    ...history.map((m) => ({ role: m.role, content: m.content }) as OpenAiMessage),
+  ];
   const toolTrace: ToolTrace[] = [];
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const result = await callGemini(system, contents, key);
+    const result = await callGroq(messages, key);
 
-    if (result.promptFeedback?.blockReason) {
-      return { reply: "That request was blocked by the model's safety filters — try rephrasing it.", toolTrace };
+    if (result.error) {
+      return { reply: `The assistant hit an error: ${result.error.message ?? "unknown error"}`, toolTrace };
     }
 
-    const candidate = result.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
-    const textBlocks = parts.map((p) => p.text ?? "").join("\n").trim();
-    const functionCalls = parts.filter((p) => p.functionCall);
+    const message = result.choices?.[0]?.message;
+    const toolCalls = message?.tool_calls ?? [];
 
-    if (functionCalls.length === 0) {
-      return { reply: textBlocks || "I don't have anything to add.", toolTrace };
+    if (toolCalls.length === 0) {
+      return { reply: message?.content?.trim() || "I don't have anything to add.", toolTrace };
     }
 
-    contents.push({ role: "model", parts });
+    messages.push({ role: "assistant", content: message?.content ?? null, tool_calls: toolCalls });
 
-    const responseParts: GeminiPart[] = [];
-    for (const call of functionCalls) {
-      const name = call.functionCall!.name;
-      const input = call.functionCall!.args ?? {};
+    for (const call of toolCalls) {
+      const name = call.function.name;
+      let input: Record<string, unknown> = {};
+      try {
+        input = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+      } catch {
+        // malformed arguments — fall through with an empty input; the tool's
+        // own validation (missing required fields) will surface a clear error
+      }
       let output: unknown;
       let ok = true;
       try {
@@ -628,9 +612,8 @@ export async function runAssistantTurn(history: ChatMessage[], actor: AssistantA
         ok = false;
       }
       toolTrace.push({ name, input, output, ok });
-      responseParts.push({ functionResponse: { name, response: { result: output } } });
+      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(output) });
     }
-    contents.push({ role: "function", parts: responseParts });
   }
 
   return { reply: "I made several tool calls but couldn't finish reasoning about the result — try narrowing your question.", toolTrace };
