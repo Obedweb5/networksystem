@@ -18,6 +18,7 @@ import {
   getNocSettings, updateNocSettings,
   type NocIncidentDto, type NocRecommendationDto, type IncidentSeverity,
 } from "@/lib/noc-api";
+import { SystemAssistantChat } from "./SystemAssistantChat";
 
 const OPERATOR_ROLES = ["super_admin", "business_owner", "staff", "technician"];
 
@@ -128,6 +129,8 @@ export function AiNocView() {
         Off by default: the network analyst here can always recommend and (with a staff click) run safe fixes, but nothing runs unattended until this is switched on.
         {isOperator && " Recommendations needing account changes (suspend, reactivate, move router) always require a staff approval regardless of this setting."}
       </p>
+
+      <SystemAssistantChat />
 
       {/* Overview tiles */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
