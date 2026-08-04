@@ -66,7 +66,7 @@ router.get("/noc/overview", requireAuth, async (req, res) => {
 
   const [invoiceStats] = await db.select({
     paid: sql<string>`count(*) filter (where ${invoicesTable.status} = 'PAID' and ${invoicesTable.createdAt} >= ${since30d})`,
-    failed: sql<string>`count(*) filter (where ${invoicesTable.status} in ('OVERDUE','CANCELLED') and ${invoicesTable.createdAt} >= ${since30d})`,
+    failed: sql<string>`count(*) filter (where (${invoicesTable.status} = 'VOID' or (${invoicesTable.status} = 'PENDING' and ${invoicesTable.dueAt} < now())) and ${invoicesTable.createdAt} >= ${since30d})`,
   }).from(invoicesTable).where(eq(invoicesTable.tenantId, tenantId));
 
   const since1h = new Date(Date.now() - 3_600_000);
