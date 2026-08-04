@@ -45,9 +45,11 @@ import { logger } from "../lib/logger";
  */
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
-// llama-3.3-70b-versatile has solid tool-calling support and generous free-tier
-// limits (30 RPM / 1,000 RPD as of mid-2026) — plenty for an internal admin chat.
-const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+// Groq is shutting down llama-3.3-70b-versatile on 08/16/26 (see
+// console.groq.com/docs/deprecations); openai/gpt-oss-120b is their listed
+// replacement, has solid tool-calling support, and a larger free-tier TPM
+// budget than llama-3.3-70b-versatile had, which should also reduce 429s.
+const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -166,7 +168,7 @@ const TOOLS = [
       properties: {
         query: { type: "string", description: "Name or phone fragment to search for. Omit to list recent customers." },
         isActive: { type: "boolean", description: "Filter to active or inactive customers only." },
-        limit: { type: "integer", description: "Max results, default 10, max 25." },
+        limit: { type: ["integer", "string"], description: "Max results, default 10, max 25." },
       },
     },
   },
@@ -183,7 +185,7 @@ const TOOLS = [
       properties: {
         status: { type: "string", enum: ["ACTIVE", "SUSPENDED", "OVERDUE", "EXPIRED", "CANCELLED"] },
         customerId: { type: "string" },
-        limit: { type: "integer", description: "Default 20, max 50." },
+        limit: { type: ["integer", "string"], description: "Default 20, max 50." },
       },
     },
   },
@@ -200,7 +202,7 @@ const TOOLS = [
       properties: {
         status: { type: "string", enum: ["DRAFT", "PENDING", "PAID", "VOID"] },
         customerId: { type: "string" },
-        limit: { type: "integer", description: "Default 20, max 50." },
+        limit: { type: ["integer", "string"], description: "Default 20, max 50." },
       },
     },
   },
@@ -217,7 +219,7 @@ const TOOLS = [
   {
     name: "list_voucher_batches",
     description: "List hotspot voucher batches with redemption counts.",
-    input_schema: { type: "object", properties: { limit: { type: "integer", description: "Default 10, max 30." } } },
+    input_schema: { type: "object", properties: { limit: { type: ["integer", "string"], description: "Default 10, max 30." } } },
   },
   {
     name: "get_noc_overview",
@@ -227,7 +229,7 @@ const TOOLS = [
   {
     name: "list_incidents",
     description: "List NOC incidents, optionally filtered by status (OPEN, ACKNOWLEDGED, RESOLVED, AUTO_RESOLVED).",
-    input_schema: { type: "object", properties: { status: { type: "string", enum: ["OPEN", "ACKNOWLEDGED", "RESOLVED", "AUTO_RESOLVED"] }, limit: { type: "integer" } } },
+    input_schema: { type: "object", properties: { status: { type: "string", enum: ["OPEN", "ACKNOWLEDGED", "RESOLVED", "AUTO_RESOLVED"] }, limit: { type: ["integer", "string"] } } },
   },
   {
     name: "list_recommendations",
@@ -537,6 +539,17 @@ interface OpenAiChatResponse {
   error?: { message?: string };
 }
 
+class GroqRequestError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.name = "GroqRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function callGroq(messages: OpenAiMessage[], key: string): Promise<OpenAiChatResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -556,7 +569,16 @@ async function callGroq(messages: OpenAiMessage[], key: string): Promise<OpenAiC
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       logger.error({ status: response.status, body: body.slice(0, 500) }, "System assistant request failed");
-      throw new Error(`Assistant request failed (${response.status})`);
+      let code: string | undefined;
+      let apiMessage: string | undefined;
+      try {
+        const parsed = JSON.parse(body) as { error?: { code?: string; message?: string } };
+        code = parsed.error?.code;
+        apiMessage = parsed.error?.message;
+      } catch {
+        // body wasn't JSON — fall through with status only
+      }
+      throw new GroqRequestError(response.status, apiMessage ?? `Assistant request failed (${response.status})`, code);
     }
     return (await response.json()) as OpenAiChatResponse;
   } finally {
@@ -578,7 +600,25 @@ export async function runAssistantTurn(history: ChatMessage[], actor: AssistantA
   const toolTrace: ToolTrace[] = [];
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const result = await callGroq(messages, key);
+    let result: OpenAiChatResponse;
+    try {
+      result = await callGroq(messages, key);
+    } catch (err) {
+      if (err instanceof GroqRequestError) {
+        if (err.status === 429) {
+          return { reply: "The assistant is being rate-limited by Groq's free tier right now. Give it a few seconds and try again.", toolTrace };
+        }
+        if (err.status === 400 && err.code === "tool_use_failed" && i < MAX_TOOL_ITERATIONS - 1) {
+          // The model emitted a tool call with badly-typed arguments (e.g. a
+          // quoted number). Tell it what went wrong and let it retry rather
+          // than failing the whole turn — cheaper and more reliable than
+          // trying to anticipate every malformed-argument shape up front.
+          messages.push({ role: "user", content: `Your last tool call had invalid arguments (${err.message}). Please retry with correctly-typed arguments.` });
+          continue;
+        }
+      }
+      throw err;
+    }
 
     if (result.error) {
       return { reply: `The assistant hit an error: ${result.error.message ?? "unknown error"}`, toolTrace };
