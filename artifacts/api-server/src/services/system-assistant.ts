@@ -19,6 +19,12 @@ import { logger } from "../lib/logger";
  * System Assistant — a general-purpose, tool-using chat layer over the
  * whole platform (not just the NOC).
  *
+ * Uses Google's Gemini API (free tier available via Google AI Studio) —
+ * deliberately a different provider/key than noc-llm.ts's narrative layer,
+ * which still uses ANTHROPIC_API_KEY. The two are independent: this file
+ * degrading to "not configured" doesn't affect NOC root-cause narratives,
+ * and vice versa.
+ *
  * Design mirrors noc-llm.ts's safety posture, extended with tools:
  *  - Every "read" tool is a thin, tenant-scoped query against tables that
  *    already exist — no new data access path, just a natural-language
@@ -28,7 +34,7 @@ import { logger } from "../lib/logger";
  *    functions the REST routes call (provisioning-engine.ts,
  *    noc-actions.ts) — it does not touch the DB directly for mutations,
  *    and it re-checks the same role requirements the equivalent REST route
- *    enforces (see ROLE_REQUIREMENTS below) before running anything.
+ *    enforces (see requireOperator below) before running anything.
  *  - A chat message the user actually sent and the server authenticated is
  *    treated as human intent, exactly like a click on "Approve" in the NOC
  *    UI — so REQUIRES_APPROVAL-tier actions (suspend, reprovision) can run
@@ -38,18 +44,19 @@ import { logger } from "../lib/logger";
  *    UI can show exactly what was looked up or changed.
  */
 
-const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_VERSION = "2023-06-01";
-const DEFAULT_MODEL = "claude-sonnet-5";
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_MODEL = "gemini-2.0-flash";
 const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_TOOL_ITERATIONS = 8;
 
 function model(): string {
-  return process.env.ANTHROPIC_ASSISTANT_MODEL?.trim() || process.env.ANTHROPIC_NOC_MODEL?.trim() || DEFAULT_MODEL;
+  return process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
 }
 
 function apiKey(): string | null {
-  const key = process.env.ANTHROPIC_API_KEY;
+  // GEMINI_API_KEY is the documented name; GOOGLE_API_KEY accepted too
+  // since that's what some Google AI Studio quick-start snippets use.
+  const key = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
   return key && key.trim() ? key.trim() : null;
 }
 
@@ -93,7 +100,7 @@ const KNOWN_GAPS = [
   { area: "Payments", gap: "No other payment providers (card, other mobile money) are wired up beyond M-PESA." },
   { area: "Backups", gap: "There is no in-app database backup/restore. Backups must be handled at the infrastructure level (e.g. the Postgres provider's own snapshot tooling)." },
   { area: "Integrations", gap: "No third-party integrations (accounting software, CRM, etc.) exist yet." },
-  { area: "AI narrative", gap: "The LLM narrative layer (root-cause prose, incident reports, this assistant) silently degrades to rule-based/unavailable if ANTHROPIC_API_KEY is not configured for the environment." },
+  { area: "AI narrative", gap: "The NOC root-cause narrative layer (incident reports, plain-English fault summaries) silently degrades to rule-based/unavailable if ANTHROPIC_API_KEY is not configured for the environment. This chat assistant is a separate integration (Gemini) and degrades independently if GEMINI_API_KEY is missing." },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -146,7 +153,8 @@ function requireOperator(actor: AssistantActor): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Tool definitions (Anthropic tool-use schema)
+// Tool definitions — plain JSON-schema style (provider-agnostic); converted
+// to Gemini's function-declaration Schema format by toGeminiTools() below.
 // ---------------------------------------------------------------------------
 
 const TOOLS = [
@@ -493,28 +501,78 @@ async function runTool(name: string, input: Record<string, unknown>, actor: Assi
 }
 
 // ---------------------------------------------------------------------------
-// Chat loop
+// Gemini schema conversion — TOOLS above is plain lowercase JSON-schema
+// ("object", "string", ...); Gemini's function-declaration Schema wants
+// uppercase Type enum values ("OBJECT", "STRING", ...). This walks the tree
+// and converts, so TOOLS itself stays provider-agnostic and readable.
 // ---------------------------------------------------------------------------
 
-interface AnthropicContentBlock {
-  type: "text" | "tool_use" | "tool_result";
-  text?: string;
-  id?: string;
-  name?: string;
-  input?: Record<string, unknown>;
-  tool_use_id?: string;
-  content?: string;
-  is_error?: boolean;
+interface JsonSchemaLike {
+  type?: string;
+  description?: string;
+  enum?: string[];
+  properties?: Record<string, JsonSchemaLike>;
+  items?: JsonSchemaLike;
+  required?: string[];
 }
 
-async function callAnthropic(system: string, messages: Array<{ role: string; content: string | AnthropicContentBlock[] }>, key: string): Promise<{ content: AnthropicContentBlock[]; stop_reason: string }> {
+function toGeminiSchema(schema: JsonSchemaLike): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (schema.type) out.type = schema.type.toUpperCase();
+  if (schema.description) out.description = schema.description;
+  if (schema.enum) out.enum = schema.enum;
+  if (schema.required) out.required = schema.required;
+  if (schema.properties) {
+    out.properties = Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, toGeminiSchema(v)]));
+  }
+  if (schema.items) out.items = toGeminiSchema(schema.items);
+  return out;
+}
+
+function toGeminiTools(): Array<{ functionDeclarations: Array<{ name: string; description: string; parameters: Record<string, unknown> }> }> {
+  return [{
+    functionDeclarations: TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: toGeminiSchema(t.input_schema as unknown as JsonSchemaLike),
+    })),
+  }];
+}
+
+// ---------------------------------------------------------------------------
+// Chat loop (Gemini generateContent, function-calling)
+// ---------------------------------------------------------------------------
+
+interface GeminiPart {
+  text?: string;
+  functionCall?: { name: string; args?: Record<string, unknown> };
+  functionResponse?: { name: string; response: Record<string, unknown> };
+}
+
+interface GeminiContent {
+  role: "user" | "model" | "function";
+  parts: GeminiPart[];
+}
+
+interface GeminiResponse {
+  candidates?: Array<{ content?: GeminiContent; finishReason?: string }>;
+  promptFeedback?: { blockReason?: string };
+}
+
+async function callGemini(system: string, contents: GeminiContent[], key: string): Promise<GeminiResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(ANTHROPIC_MESSAGES_URL, {
+    const url = `${GEMINI_BASE_URL}/${encodeURIComponent(model())}:generateContent?key=${encodeURIComponent(key)}`;
+    const response = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION },
-      body: JSON.stringify({ model: model(), max_tokens: 1500, system, tools: TOOLS, messages }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents,
+        tools: toGeminiTools(),
+        generationConfig: { maxOutputTokens: 1500 },
+      }),
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -522,7 +580,7 @@ async function callAnthropic(system: string, messages: Array<{ role: string; con
       logger.error({ status: response.status, body: body.slice(0, 500) }, "System assistant request failed");
       throw new Error(`Assistant request failed (${response.status})`);
     }
-    return (await response.json()) as { content: AnthropicContentBlock[]; stop_reason: string };
+    return (await response.json()) as GeminiResponse;
   } finally {
     clearTimeout(timeout);
   }
@@ -531,41 +589,50 @@ async function callAnthropic(system: string, messages: Array<{ role: string; con
 export async function runAssistantTurn(history: ChatMessage[], actor: AssistantActor): Promise<AssistantTurnResult> {
   const key = apiKey();
   if (!key) {
-    return { reply: "The System Assistant isn't configured yet — an ANTHROPIC_API_KEY needs to be set for this environment.", toolTrace: [] };
+    return { reply: "The System Assistant isn't configured yet — a GEMINI_API_KEY (from Google AI Studio) needs to be set for this environment.", toolTrace: [] };
   }
 
   const system = buildSystemPrompt(actor);
-  const messages: Array<{ role: string; content: string | AnthropicContentBlock[] }> = history.map((m) => ({ role: m.role, content: m.content }));
+  const contents: GeminiContent[] = history.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
   const toolTrace: ToolTrace[] = [];
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const result = await callAnthropic(system, messages, key);
-    const textBlocks = result.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim();
-    const toolUses = result.content.filter((b) => b.type === "tool_use");
+    const result = await callGemini(system, contents, key);
 
-    if (result.stop_reason !== "tool_use" || toolUses.length === 0) {
+    if (result.promptFeedback?.blockReason) {
+      return { reply: "That request was blocked by the model's safety filters — try rephrasing it.", toolTrace };
+    }
+
+    const candidate = result.candidates?.[0];
+    const parts = candidate?.content?.parts ?? [];
+    const textBlocks = parts.map((p) => p.text ?? "").join("\n").trim();
+    const functionCalls = parts.filter((p) => p.functionCall);
+
+    if (functionCalls.length === 0) {
       return { reply: textBlocks || "I don't have anything to add.", toolTrace };
     }
 
-    messages.push({ role: "assistant", content: result.content });
+    contents.push({ role: "model", parts });
 
-    const toolResults: AnthropicContentBlock[] = [];
-    for (const call of toolUses) {
-      const input = call.input ?? {};
+    const responseParts: GeminiPart[] = [];
+    for (const call of functionCalls) {
+      const name = call.functionCall!.name;
+      const input = call.functionCall!.args ?? {};
       let output: unknown;
       let ok = true;
       try {
-        output = await runTool(call.name!, input, actor);
+        output = await runTool(name, input, actor);
         ok = !(output && typeof output === "object" && "error" in (output as Record<string, unknown>) && (output as Record<string, unknown>).error);
       } catch (err) {
         output = { error: err instanceof Error ? err.message : String(err) };
         ok = false;
       }
-      toolTrace.push({ name: call.name!, input, output, ok });
-      toolResults.push({ type: "tool_result", tool_use_id: call.id!, content: JSON.stringify(output), is_error: !ok });
+      toolTrace.push({ name, input, output, ok });
+      responseParts.push({ functionResponse: { name, response: { result: output } } });
     }
-    messages.push({ role: "user", content: toolResults });
+    contents.push({ role: "function", parts: responseParts });
   }
 
   return { reply: "I made several tool calls but couldn't finish reasoning about the result — try narrowing your question.", toolTrace };
 }
+
